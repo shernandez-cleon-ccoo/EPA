@@ -1,0 +1,84 @@
+name: Actualizar tablas EPA
+
+on:
+  # Disparo manual desde la pestaña Actions de GitHub (para la primera carga
+  # completa 2005-hoy, o para forzar un reintento).
+  workflow_dispatch: {}
+  # Comprobación automática DIARIA. La EPA se publica ~4 semanas tras acabar
+  # cada trimestre, en una fecha conocida pero que no queremos perseguir con
+  # un cron ajustado a mano; si el trimestre nuevo aún no está publicado, el
+  # script no encuentra nada pendiente y no hace nada ese día. Con cron diario
+  # el desfase máximo entre "el INE publica" y "el repo tiene la tabla
+  # actualizada" es de un día. La propia app Shiny añade además un chequeo al
+  # arrancar (ver app.R) que detecta si hay un trimestre más nuevo que el
+  # cacheado y lo carga al vuelo, así que en la práctica el usuario ve el dato
+  # el mismo día de la publicación aunque el cron de esa noche aún no haya
+  # corrido.
+  schedule:
+    - cron: "0 6 * * *"  # todos los días a las 06:00 UTC
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    # Guardrail: la primera ejecución (histórico completo 2005-hoy) puede
+    # tardar bastante por el volumen de descargas al FTP del INE. Súbelo si
+    # hace falta; las ejecuciones incrementales (1 trimestre nuevo) son
+    # rápidas.
+    timeout-minutes: 350
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.4"
+
+      - name: Cachear paquetes de R
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: r-pkgs-${{ hashFiles('**/DESCRIPTION') }}-v1
+          restore-keys: r-pkgs-
+
+      - name: Cachear microdatos EPA ya descargados (epa_cache/)
+        uses: actions/cache@v4
+        with:
+          path: epa_cache
+          # Los ficheros ya descargados no cambian nunca (datos publicados
+          # cerrados), así que la clave no necesita invalidarse por contenido.
+          key: epa-microdatos-cache-v1
+          restore-keys: epa-microdatos-cache-
+
+      - name: Instalar dependencias de R
+        run: |
+          Rscript -e 'install.packages(c("readr","dplyr","stringr","purrr","httr","tibble","tidyr"), repos = "https://cloud.r-project.org")'
+
+      - name: Ejecutar build_epa_tablas.R
+        run: Rscript build_epa_tablas.R
+
+      - name: Comprobar si hay cambios en las tablas agregadas
+        id: cambios
+        run: |
+          if git diff --quiet -- data_agregada; then
+            echo "hay_cambios=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay_cambios=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit y push de las tablas actualizadas
+        if: steps.cambios.outputs.hay_cambios == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data_agregada
+          git commit -m "Actualizar tablas EPA agregadas ($(date -u +%Y-%m-%d))"
+          git push
+
+      - name: Subir log de errores (si lo hay) como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: errores-build-epa
+          path: data_agregada/errores_build.log
+          if-no-files-found: ignore
