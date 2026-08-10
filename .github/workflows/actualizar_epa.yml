@@ -1,48 +1,36 @@
 name: Actualizar tablas EPA
-
 on:
   workflow_dispatch:
-
   schedule:
     - cron: "0 6 * * *"
-
 jobs:
   actualizar:
     runs-on: ubuntu-latest
     timeout-minutes: 350
-
     steps:
-
       - name: Checkout del repositorio
         uses: actions/checkout@v4
-
       - name: Diagnóstico del checkout
         run: |
           echo "===== ENTORNO ====="
           echo "Workspace: $GITHUB_WORKSPACE"
           pwd
-
           echo ""
           echo "===== GIT ====="
           echo "Rama:"
           git branch --show-current
-
           echo ""
           echo "Commit:"
           git rev-parse HEAD
-
           echo ""
           echo "Ref:"
           echo "$GITHUB_REF"
-
           echo ""
           echo "===== CONTENIDO DE LA RAÍZ ====="
           ls -lah
-
           echo ""
           echo "===== BUSCANDO build_epa_tablas.R ====="
           find . -name "build_epa_tablas.R"
-
           echo ""
           echo "===== COMPROBACIÓN ====="
           if [ -f build_epa_tablas.R ]; then
@@ -51,7 +39,6 @@ jobs:
             echo "❌ build_epa_tablas.R NO está en la raíz"
             exit 1
           fi
-
       - name: Instalar dependencias del sistema Linux
         run: |
           sudo apt-get update
@@ -59,12 +46,10 @@ jobs:
             libcurl4-openssl-dev \
             libssl-dev \
             libxml2-dev
-
       - name: Instalar R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: "4.4"
-
       - name: Cachear paquetes de R
         uses: actions/cache@v4
         with:
@@ -72,7 +57,6 @@ jobs:
           key: r-pkgs-${{ hashFiles('**/DESCRIPTION') }}-v1
           restore-keys: |
             r-pkgs-
-
       - name: Cachear microdatos EPA
         uses: actions/cache@v4
         with:
@@ -80,7 +64,6 @@ jobs:
           key: epa-microdatos-cache-v1
           restore-keys: |
             epa-microdatos-cache-
-
       - name: Instalar dependencias de R
         run: |
           Rscript -e 'install.packages(
@@ -96,29 +79,33 @@ jobs:
             ),
             repos="https://cloud.r-project.org"
           )'
-
       - name: Ejecutar build_epa_tablas.R
         run: |
           Rscript build_epa_tablas.R
-
       - name: Comprobar si hay cambios
         id: cambios
         run: |
-          if git diff --quiet -- data_agregada; then
+          # OJO: "git diff" solo mira ficheros ya trackeados por git, así que
+          # nunca detecta un data_agregada/ nuevo (la primera vez que corre
+          # el workflow, esos .rds son ficheros sin trackear). Por eso primero
+          # hacemos "git add" y comprobamos el índice con --cached, que sí
+          # detecta altas nuevas además de modificaciones.
+          git add data_agregada
+          if git diff --cached --quiet -- data_agregada; then
             echo "hay_cambios=false" >> "$GITHUB_OUTPUT"
           else
             echo "hay_cambios=true" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Commit y push
         if: steps.cambios.outputs.hay_cambios == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # data_agregada ya está en el índice (staged) desde el paso
+          # anterior; este "git add" es solo un idempotente por si acaso.
           git add data_agregada
           git commit -m "Actualizar tablas EPA ($(date -u +%Y-%m-%d))"
           git push
-
       - name: Subir log de errores
         if: always()
         uses: actions/upload-artifact@v4
