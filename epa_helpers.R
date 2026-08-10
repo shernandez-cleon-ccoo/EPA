@@ -68,10 +68,14 @@ ccaa_labels <- c(
 # -----------------------------------------------------------------------------
 
 # EDAD5 / EDAD1 (T5EDAD): quinquenios "00".."65". Los agrupamos en las mismas
-# bandas que usaba tu dashboard viejo (epa_edad$edad).
+# bandas que usaba tu dashboard viejo (epa_edad$edad). NOTA: la banda "0-16"
+# nunca aparecerá poblada en la práctica porque cargar_trimestre() ya filtra
+# NIVEL == "1" (solo 16 años y más, el universo del cuestionario de actividad
+# económica); se deja mapeada por coherencia de etiqueta con el selector, no
+# porque vaya a tener datos.
 edad_banda <- function(edad_ep) {
   dplyr::case_when(
-    edad_ep %in% c("00", "05", "10") ~ "0-15",
+    edad_ep %in% c("00", "05", "10") ~ "0-16",
     edad_ep == "16"                  ~ "16-19",
     edad_ep == "20"                  ~ "20-24",
     edad_ep %in% c("25", "30")       ~ "25-34",
@@ -485,4 +489,108 @@ filtrar_nacionalidad <- function(df, nacionalidad) {
   } else {
     df |> filter(as.character(NAC1) == nacionalidad)
   }
+}
+
+# -----------------------------------------------------------------------------
+# AGREGACIÓN (compartida entre build_epa_tablas.R y el fallback "al vuelo" de
+# app.R para cuando hay un trimestre publicado más nuevo que el cacheado en
+# data_agregada/). Ver cabecera de build_epa_tablas.R para el detalle del
+# esquema de columnas resultante.
+# -----------------------------------------------------------------------------
+
+periodo_date <- function(anio, trim) {
+  as.Date(sprintf("%d-%s-01", anio, c("01", "04", "07", "10")[trim])) +
+    months(3) - 1
+}
+
+agregar_dato_base <- function(df, group_vars) {
+  if (nrow(df) == 0) return(tibble())
+  df |>
+    filter(if_all(all_of(group_vars), ~ !is.na(.x))) |>
+    group_by(across(all_of(c("periodo", group_vars)))) |>
+    summarise(
+      valor_pob = sum(FACTOR_USAR, na.rm = TRUE),
+      valor_act = sum(FACTOR_USAR[AOI %in% c("03", "04", "05", "06")], na.rm = TRUE),
+      valor_ocu = sum(FACTOR_USAR[AOI %in% c("03", "04")], na.rm = TRUE),
+      valor_par = sum(FACTOR_USAR[AOI %in% c("05", "06")], na.rm = TRUE),
+      valor_ina = sum(FACTOR_USAR[AOI %in% c("07", "08", "09")], na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      tasa_par = 100 * valor_par / valor_act,
+      tasa_act = 100 * valor_act / valor_pob,
+      tasa_emp = 100 * valor_ocu / valor_pob
+    )
+}
+
+agregar_ocupados_base <- function(df, group_vars) {
+  if (nrow(df) == 0) return(tibble())
+  df |>
+    filter(AOI %in% c("03", "04")) |>
+    filter(if_all(all_of(group_vars), ~ !is.na(.x))) |>
+    group_by(across(all_of(c("periodo", group_vars)))) |>
+    summarise(valor_ocu = sum(FACTOR_USAR, na.rm = TRUE), .groups = "drop")
+}
+
+con_totales <- function(fn, df, dims, territorio_vars, etiquetas = character(0)) {
+  combinaciones <- unlist(lapply(0:length(dims), combn, x = dims, simplify = FALSE), recursive = FALSE)
+  resultados <- lapply(combinaciones, function(a_colapsar) {
+    df2 <- df
+    for (col in a_colapsar) {
+      etq <- if (col %in% names(etiquetas)) etiquetas[[col]] else "Total"
+      df2[[col]] <- etq
+    }
+    fn(df2, c(territorio_vars, dims))
+  })
+  bind_rows(resultados)
+}
+
+enriquecer_trimestre <- function(df, anio, trim) {
+  df |>
+    mutate(
+      periodo   = periodo_date(anio, trim),
+      sexo      = sexo_grupo(as.character(SEXO1)),
+      edad      = edad_banda(EDAD_EP),
+      form      = if ("NFORMA" %in% names(df)) nforma_label(as.character(NFORMA)) else NA_character_,
+      nac       = if ("EXREGNA1" %in% names(df)) nacionalidad_grupo(as.character(NAC1), as.character(EXREGNA1)) else NA_character_,
+      sector    = sector_grupo(ACTIVIDAD),
+      region    = unname(ccaa_labels[CCAA]),
+      provincia = unname(prov_labels[PROV])
+    )
+}
+
+# Calcula las 5 tablas estrella (mismo esquema que data_agregada/epa_*.rds)
+# para UN trimestre ya cargado con cargar_trimestre(). La usan tanto
+# build_epa_tablas.R como el fallback "al vuelo" de app.R.
+calcular_tablas_trimestre <- function(res, anio, trim) {
+  df <- enriquecer_trimestre(res, anio, trim)
+
+  edad <- bind_rows(
+    con_totales(agregar_dato_base, df, c("edad", "sexo"), "region", c(edad = "total", sexo = "total")),
+    con_totales(agregar_dato_base, df |> mutate(region = "España"), c("edad", "sexo"), "region", c(edad = "total", sexo = "total"))
+  )
+  prov <- bind_rows(
+    con_totales(agregar_dato_base, df, c("sexo"), "provincia", c(sexo = "total")),
+    con_totales(agregar_dato_base, df |> mutate(provincia = "España"), c("sexo"), "provincia", c(sexo = "total"))
+  )
+  form <- bind_rows(
+    con_totales(agregar_dato_base, df, c("form", "sexo"), "region", c(form = "Total", sexo = "total")),
+    con_totales(agregar_dato_base, df |> mutate(region = "España"), c("form", "sexo"), "region", c(form = "Total", sexo = "total"))
+  )
+  nac_es_ue <- bind_rows(
+    con_totales(agregar_dato_base, df, c("sexo"), c("region", "nac"), c(sexo = "total")),
+    con_totales(agregar_dato_base, df |> mutate(region = "España"), c("sexo"), c("region", "nac"), c(sexo = "total"))
+  )
+  df_ex <- df |> filter(nac %in% c("UE", "no_UE")) |> mutate(nac = "EX")
+  nac_ex <- bind_rows(
+    con_totales(agregar_dato_base, df_ex, c("sexo"), c("region", "nac"), c(sexo = "total")),
+    con_totales(agregar_dato_base, df_ex |> mutate(region = "España"), c("sexo"), c("region", "nac"), c(sexo = "total"))
+  )
+  nac <- bind_rows(nac_es_ue, nac_ex)
+  sector <- bind_rows(
+    con_totales(agregar_ocupados_base, df, c("sector", "edad", "sexo"), "region", c(sector = "Total", edad = "total", sexo = "total")),
+    con_totales(agregar_ocupados_base, df |> mutate(region = "España"), c("sector", "edad", "sexo"), "region", c(sector = "Total", edad = "total", sexo = "total"))
+  )
+
+  list(edad = edad, prov = prov, form = form, nac = nac, sector = sector)
 }
