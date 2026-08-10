@@ -130,6 +130,44 @@ sector_grupo <- function(actividad) {
   )
 }
 
+# OCUP1 (TOCUP): 10 grandes grupos CNO (0-9), estables 2005-2026 (CNO-1994 /
+# CNO-2011 armonizados por el propio INE en el mismo código agregado). Solo
+# está informada para quienes trabajaron o tenían empleo la semana de
+# referencia (ocupados), igual que ACT1/ACT09.
+ocupacion_label <- function(ocup1) {
+  dplyr::case_when(
+    ocup1 == "0" ~ "Militares",
+    ocup1 == "1" ~ "Directores y gerentes",
+    ocup1 == "2" ~ "Técnicos y profesionales científicos e intelectuales",
+    ocup1 == "3" ~ "Técnicos y profesionales de apoyo",
+    ocup1 == "4" ~ "Empleados contables, administrativos y de oficina",
+    ocup1 == "5" ~ "Trabajadores de servicios y comercio",
+    ocup1 == "6" ~ "Trabajadores cualificados agrario, ganadero, forestal y pesquero",
+    ocup1 == "7" ~ "Artesanos y trabajadores cualificados de industria y construcción",
+    ocup1 == "8" ~ "Operadores de instalaciones y maquinaria, montadores",
+    ocup1 == "9" ~ "Ocupaciones elementales",
+    TRUE ~ NA_character_
+  )
+}
+
+# ITBU (TITBU): tiempo que lleva buscando empleo, 8 tramos, estable
+# 2005-2026. Solo informada para quienes buscan empleo o lo han encontrado
+# para empezar más adelante (aprox. parados, AOI %in% c("05","06")).
+# Se reagrupa en los tramos que pide el briefing de paro de larga duración
+# (<3m / 3-6m / 6-12m / 1-2a / >2a); la frontera de "larga duración" (>=1
+# año) queda en el corte entre "06 meses a <1 año" y "1 año a <1 año y
+# medio".
+duracion_paro_banda <- function(itbu) {
+  dplyr::case_when(
+    itbu %in% c("01", "02") ~ "< 3 meses",
+    itbu == "03"            ~ "3 a 6 meses",
+    itbu == "04"            ~ "6 meses a 1 año",
+    itbu %in% c("05", "06") ~ "1 a 2 años",
+    itbu %in% c("07", "08") ~ "2 años o más",
+    TRUE ~ NA_character_
+  )
+}
+
 sexo_grupo <- function(sexo1) {
   dplyr::case_when(
     sexo1 == "1" ~ "hombres",
@@ -144,8 +182,8 @@ sexo_grupo <- function(sexo1) {
 cols_keep <- c(
   "CICLO", "CCAA", "PROV", "NVIVI", "NIVEL", "EDAD1", "EDAD5", "SEXO1", "NAC1",
   "EXREGNA1", "NFORMA",
-  "ACT1", "ACT09", "SITU", "SP", "DUCON1", "DUCON2", "DUCON3", "PARCO1", "PARCO2",
-  "EXTRA", "EXTPAG", "EXTNPG", "AOI", "FACTOREL"
+  "ACT1", "ACT09", "OCUP1", "SITU", "SP", "DUCON1", "DUCON2", "DUCON3", "PARCO1", "PARCO2",
+  "EXTRA", "EXTPAG", "EXTNPG", "AOI", "ITBU", "FACTOREL"
 )
 
 # -----------------------------------------------------------------------------
@@ -539,6 +577,23 @@ agregar_ocupados_base <- function(df, group_vars) {
     summarise(valor_ocu = sum(FACTOR_USAR, na.rm = TRUE), .groups = "drop")
 }
 
+# Análogo a agregar_ocupados_base() pero para dimensiones que solo están
+# informadas para parados (p.ej. duracion_paro, vía ITBU). Usa AOI %in%
+# c("05","06") en vez de "está en la tabla epa_paro_larga sumando FACTOR_USAR
+# de todos los parados", porque ITBU también puede venir informado para
+# alguna persona ya colocada que empieza más tarde; nos ceñimos a los
+# parados en sentido estricto (mismo universo que valor_par en las demás
+# tablas) para que "% de larga duración" tenga como denominador el mismo
+# total de parados que ya usas en el resto del dashboard.
+agregar_parados_base <- function(df, group_vars) {
+  if (nrow(df) == 0) return(tibble())
+  df |>
+    filter(AOI %in% c("05", "06")) |>
+    filter(if_all(all_of(group_vars), ~ !is.na(.x))) |>
+    group_by(across(all_of(c("periodo", group_vars)))) |>
+    summarise(valor_par = sum(FACTOR_USAR, na.rm = TRUE), .groups = "drop")
+}
+
 con_totales <- function(fn, df, dims, territorio_vars, etiquetas = character(0)) {
   combinaciones <- unlist(lapply(0:length(dims), combn, x = dims, simplify = FALSE), recursive = FALSE)
   resultados <- lapply(combinaciones, function(a_colapsar) {
@@ -555,14 +610,16 @@ con_totales <- function(fn, df, dims, territorio_vars, etiquetas = character(0))
 enriquecer_trimestre <- function(df, anio, trim) {
   df |>
     mutate(
-      periodo   = periodo_date(anio, trim),
-      sexo      = sexo_grupo(as.character(SEXO1)),
-      edad      = edad_banda(EDAD_EP),
-      form      = if ("NFORMA" %in% names(df)) nforma_label(as.character(NFORMA)) else NA_character_,
-      nac       = if ("EXREGNA1" %in% names(df)) nacionalidad_grupo(as.character(NAC1), as.character(EXREGNA1)) else NA_character_,
-      sector    = sector_grupo(ACTIVIDAD),
-      region    = unname(ccaa_labels[CCAA]),
-      provincia = unname(prov_labels[PROV])
+      periodo       = periodo_date(anio, trim),
+      sexo          = sexo_grupo(as.character(SEXO1)),
+      edad          = edad_banda(EDAD_EP),
+      form          = if ("NFORMA" %in% names(df)) nforma_label(as.character(NFORMA)) else NA_character_,
+      nac           = if ("EXREGNA1" %in% names(df)) nacionalidad_grupo(as.character(NAC1), as.character(EXREGNA1)) else NA_character_,
+      sector        = sector_grupo(ACTIVIDAD),
+      ocupacion     = if ("OCUP1" %in% names(df)) ocupacion_label(as.character(OCUP1)) else NA_character_,
+      duracion_paro = if ("ITBU" %in% names(df)) duracion_paro_banda(as.character(ITBU)) else NA_character_,
+      region        = unname(ccaa_labels[CCAA]),
+      provincia     = unname(prov_labels[PROV])
     )
 }
 
@@ -598,6 +655,14 @@ calcular_tablas_trimestre <- function(res, anio, trim) {
     con_totales(agregar_ocupados_base, df, c("sector", "edad", "sexo"), "region", c(sector = "Total", edad = "total", sexo = "total")),
     con_totales(agregar_ocupados_base, df |> mutate(region = "España"), c("sector", "edad", "sexo"), "region", c(sector = "Total", edad = "total", sexo = "total"))
   )
+  ocup <- bind_rows(
+    con_totales(agregar_ocupados_base, df, c("ocupacion", "sexo"), "region", c(ocupacion = "Total", sexo = "total")),
+    con_totales(agregar_ocupados_base, df |> mutate(region = "España"), c("ocupacion", "sexo"), "region", c(ocupacion = "Total", sexo = "total"))
+  )
+  paro_larga <- bind_rows(
+    con_totales(agregar_parados_base, df, c("duracion_paro", "sexo"), "region", c(duracion_paro = "Total", sexo = "total")),
+    con_totales(agregar_parados_base, df |> mutate(region = "España"), c("duracion_paro", "sexo"), "region", c(duracion_paro = "Total", sexo = "total"))
+  )
 
-  list(edad = edad, prov = prov, form = form, nac = nac, sector = sector)
+  list(edad = edad, prov = prov, form = form, nac = nac, sector = sector, ocup = ocup, paro_larga = paro_larga)
 }
