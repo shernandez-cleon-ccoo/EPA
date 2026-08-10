@@ -499,8 +499,15 @@ filtrar_nacionalidad <- function(df, nacionalidad) {
 # -----------------------------------------------------------------------------
 
 periodo_date <- function(anio, trim) {
-  as.Date(sprintf("%d-%s-01", anio, c("01", "04", "07", "10")[trim])) +
-    months(3) - 1
+  # OJO: "fecha + months(3)" requiere que months() esté redefinida por
+  # lubridate (su versión crea un objeto Period); la months() de R base es
+  # genérica y solo tiene método para objetos Date/POSIXt, así que
+  # months(3) con un número suelto revienta con "no applicable method".
+  # epa_helpers.R no carga lubridate, así que usamos seq.Date(), que sí
+  # soporta aritmética de meses en R base sin depender de ningún paquete.
+  inicio <- as.Date(sprintf("%d-%s-01", anio, c("01", "04", "07", "10")[trim]))
+  siguiente_trimestre <- seq(inicio, by = "3 months", length.out = 2)[2]
+  siguiente_trimestre - 1
 }
 
 agregar_dato_base <- function(df, group_vars) {
