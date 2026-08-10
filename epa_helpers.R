@@ -197,11 +197,13 @@ url_micro <- function(anio, trim) {
 
 url_anexo_candidatos <- function(anio, trim) {
   yy <- sprintf("%02d", anio %% 100)
+  # Confirmado por el usuario: el anexo sigue el mismo nombre que el fichero
+  # de microdatos normal (datos_<trim>t<yy>.zip) con el sufijo "_a" antes de
+  # la extensión. Se deja "datos_..a.zip" (sin guion bajo) como variante de
+  # respaldo por si en algún trimestre concreto el guion bajo faltara.
   c(
-    sprintf("https://www.ine.es/ftp/microdatos/epa/anexob21_%dt%s.zip", trim, yy),
-    sprintf("https://www.ine.es/ftp/microdatos/epa/anexo_%dt%s.zip", trim, yy),
-    sprintf("https://www.ine.es/ftp/microdatos/epa/anexoB21_%dt%s.zip", trim, yy),
-    sprintf("https://www.ine.es/ftp/microdatos/epa/AnexoB21_%dt%s.zip", trim, yy)
+    sprintf("https://www.ine.es/ftp/microdatos/epa/datos_%dt%s_a.zip", trim, yy),
+    sprintf("https://www.ine.es/ftp/microdatos/epa/datos_%dt%sa.zip", trim, yy)
   )
 }
 
