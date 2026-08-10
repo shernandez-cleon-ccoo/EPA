@@ -12,12 +12,18 @@
 # fallback "al vuelo" de app.R -- aquí solo se orquesta el bucle por
 # trimestre y el guardado incremental.
 #
-#   epa_edad   : periodo, region, edad, sexo, valor_pob..tasa_emp
-#   epa_prov   : periodo, provincia, sexo, valor_pob..tasa_emp
-#   epa_form   : periodo, region, form, sexo, valor_pob..tasa_emp
-#   epa_nac    : periodo, region, nac, sexo, valor_pob..tasa_emp   (nac incluye
-#                también "EX" = extranjeros = UE + no_UE)
-#   epa_sector : periodo, region, sector, edad, sexo, valor_ocu   (solo ocupados)
+#   epa_edad       : periodo, region, edad, sexo, valor_pob..tasa_emp
+#   epa_prov       : periodo, provincia, sexo, valor_pob..tasa_emp
+#   epa_form       : periodo, region, form, sexo, valor_pob..tasa_emp
+#   epa_nac        : periodo, region, nac, sexo, valor_pob..tasa_emp   (nac
+#                    incluye también "EX" = extranjeros = UE + no_UE)
+#   epa_sector     : periodo, region, sector, edad, sexo, valor_ocu   (solo ocupados)
+#   epa_ocup       : periodo, region, ocupacion, sexo, valor_ocu   (solo ocupados;
+#                    ocupacion = 10 grandes grupos CNO vía OCUP1)
+#   epa_paro_larga : periodo, region, duracion_paro, sexo, valor_par   (solo
+#                    parados con ITBU informado; duracion_paro = tramos
+#                    < 3 meses / 3 a 6 meses / 6 meses a 1 año / 1 a 2 años /
+#                    2 años o más, vía ITBU)
 #
 # `periodo` es una fecha (último día del trimestre: "2024-06-30", etc.),
 # EXACTAMENTE como en las tablas originales del INE, porque todo el código de
@@ -85,11 +91,13 @@ message(sprintf("Trimestres en el histórico objetivo (%d-%dT%d): %d",
                  ANIO_MIN, ultimo$anio, ultimo$trim, length(pares_todos)))
 
 out_paths <- list(
-  edad   = file.path(OUT_DIR, "epa_edad.rds"),
-  prov   = file.path(OUT_DIR, "epa_prov.rds"),
-  form   = file.path(OUT_DIR, "epa_form.rds"),
-  nac    = file.path(OUT_DIR, "epa_nac.rds"),
-  sector = file.path(OUT_DIR, "epa_sector.rds")
+  edad       = file.path(OUT_DIR, "epa_edad.rds"),
+  prov       = file.path(OUT_DIR, "epa_prov.rds"),
+  form       = file.path(OUT_DIR, "epa_form.rds"),
+  nac        = file.path(OUT_DIR, "epa_nac.rds"),
+  sector     = file.path(OUT_DIR, "epa_sector.rds"),
+  ocup       = file.path(OUT_DIR, "epa_ocup.rds"),
+  paro_larga = file.path(OUT_DIR, "epa_paro_larga.rds")
 )
 
 pendientes_por_tabla <- lapply(out_paths, trimestres_pendientes, pares_todos = pares_todos)
@@ -105,7 +113,7 @@ if (length(periodos_pendientes) == 0) {
 message(sprintf("Trimestres a procesar en esta ejecución: %s",
                  paste(sort(periodos_pendientes), collapse = ", ")))
 
-acumulado <- list(edad = list(), prov = list(), form = list(), nac = list(), sector = list())
+acumulado <- list(edad = list(), prov = list(), form = list(), nac = list(), sector = list(), ocup = list(), paro_larga = list())
 
 for (p in pares_todos) {
   etiqueta <- sprintf("%dT%d", p[["anio"]], p[["trim"]])
@@ -121,18 +129,22 @@ for (p in pares_todos) {
   }
 
   tablas <- calcular_tablas_trimestre(res, p[["anio"]], p[["trim"]])
-  acumulado$edad[[etiqueta]]   <- tablas$edad
-  acumulado$prov[[etiqueta]]   <- tablas$prov
-  acumulado$form[[etiqueta]]   <- tablas$form
-  acumulado$nac[[etiqueta]]    <- tablas$nac
-  acumulado$sector[[etiqueta]] <- tablas$sector
+  acumulado$edad[[etiqueta]]       <- tablas$edad
+  acumulado$prov[[etiqueta]]       <- tablas$prov
+  acumulado$form[[etiqueta]]       <- tablas$form
+  acumulado$nac[[etiqueta]]        <- tablas$nac
+  acumulado$sector[[etiqueta]]     <- tablas$sector
+  acumulado$ocup[[etiqueta]]       <- tablas$ocup
+  acumulado$paro_larga[[etiqueta]] <- tablas$paro_larga
 }
 
 message("Guardando tablas agregadas...")
-anexar_guardar(bind_rows(acumulado$edad),   out_paths$edad)
-anexar_guardar(bind_rows(acumulado$prov),   out_paths$prov)
-anexar_guardar(bind_rows(acumulado$form),   out_paths$form)
-anexar_guardar(bind_rows(acumulado$nac),    out_paths$nac)
-anexar_guardar(bind_rows(acumulado$sector), out_paths$sector)
+anexar_guardar(bind_rows(acumulado$edad),       out_paths$edad)
+anexar_guardar(bind_rows(acumulado$prov),       out_paths$prov)
+anexar_guardar(bind_rows(acumulado$form),       out_paths$form)
+anexar_guardar(bind_rows(acumulado$nac),        out_paths$nac)
+anexar_guardar(bind_rows(acumulado$sector),     out_paths$sector)
+anexar_guardar(bind_rows(acumulado$ocup),       out_paths$ocup)
+anexar_guardar(bind_rows(acumulado$paro_larga), out_paths$paro_larga)
 
 message("Hecho.")
