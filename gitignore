@@ -1,0 +1,8 @@
+# Caché local de microdatos EPA descargados (se cachea aparte vía
+# actions/cache en el workflow; no debe versionarse, pesa mucho y es
+# regenerable a partir del INE).
+epa_cache/
+
+# Log de errores del build por lotes: se sube como artifact de cada
+# ejecución del workflow, no se versiona en el repo.
+logs/
