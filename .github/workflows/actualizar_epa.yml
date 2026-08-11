@@ -3,6 +3,20 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * *"
+
+# El GITHUB_TOKEN por defecto es de solo lectura en muchas organizaciones/
+# repos recientes; sin este bloque el "git push" final falla con 403 aunque
+# el resto del job termine bien.
+permissions:
+  contents: write
+
+# Evita que dos ejecuciones se pisen (p.ej. lanzas "workflow_dispatch" a
+# mano mientras el cron de las 6:00 sigue corriendo, job de hasta 350 min):
+# la segunda espera a que termine la primera en vez de competir por el push.
+concurrency:
+  group: actualizar-tablas-epa
+  cancel-in-progress: false
+
 jobs:
   actualizar:
     runs-on: ubuntu-latest
@@ -10,6 +24,7 @@ jobs:
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
+
       - name: Diagnóstico del checkout
         run: |
           echo "===== ENTORNO ====="
@@ -39,6 +54,7 @@ jobs:
             echo "❌ build_epa_tablas.R NO está en la raíz"
             exit 1
           fi
+
       - name: Instalar dependencias del sistema Linux
         run: |
           sudo apt-get update
@@ -46,17 +62,24 @@ jobs:
             libcurl4-openssl-dev \
             libssl-dev \
             libxml2-dev
+
       - name: Instalar R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: "4.4"
+
       - name: Cachear paquetes de R
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: r-pkgs-${{ hashFiles('**/DESCRIPTION') }}-v1
+          # Clave ligada al propio workflow: si cambias la lista de paquetes
+          # en el paso "Instalar dependencias de R", este fichero cambia y la
+          # caché se invalida sola (antes la clave dependía de un DESCRIPTION
+          # que no existe en este repo, así que nunca se habría invalidado).
+          key: r-pkgs-${{ hashFiles('.github/workflows/actualizar-tablas-epa.yml') }}
           restore-keys: |
             r-pkgs-
+
       - name: Cachear microdatos EPA
         uses: actions/cache@v4
         with:
@@ -64,10 +87,11 @@ jobs:
           key: epa-microdatos-cache-v1
           restore-keys: |
             epa-microdatos-cache-
+
       - name: Instalar dependencias de R
         run: |
-          Rscript -e 'install.packages(
-            c(
+          Rscript -e '
+            pkgs <- c(
               "readr",
               "dplyr",
               "stringr",
@@ -76,12 +100,21 @@ jobs:
               "httr",
               "tibble",
               "tidyr"
-            ),
-            repos="https://cloud.r-project.org"
-          )'
+            )
+            # Con la caché ya restaurada, evita reinstalar (descargar +
+            # compilar) lo que ya está presente; instala solo lo que falte.
+            faltan <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+            if (length(faltan) > 0) {
+              install.packages(faltan, repos = "https://cloud.r-project.org")
+            } else {
+              message("Todos los paquetes ya estaban en caché, nada que instalar.")
+            }
+          '
+
       - name: Ejecutar build_epa_tablas.R
         run: |
           Rscript build_epa_tablas.R
+
       - name: Comprobar si hay cambios
         id: cambios
         run: |
@@ -90,12 +123,17 @@ jobs:
           # el workflow, esos .rds son ficheros sin trackear). Por eso primero
           # hacemos "git add" y comprobamos el índice con --cached, que sí
           # detecta altas nuevas además de modificaciones.
+          #
+          # Solo miramos data_agregada/: el log de errores vive en logs/ y
+          # NO se versiona (se sube como artifact más abajo), así que nunca
+          # provoca por sí solo un commit ni crece sin límite en el repo.
           git add data_agregada
           if git diff --cached --quiet -- data_agregada; then
             echo "hay_cambios=false" >> "$GITHUB_OUTPUT"
           else
             echo "hay_cambios=true" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Commit y push
         if: steps.cambios.outputs.hay_cambios == 'true'
         run: |
@@ -105,11 +143,18 @@ jobs:
           # anterior; este "git add" es solo un idempotente por si acaso.
           git add data_agregada
           git commit -m "Actualizar tablas EPA ($(date -u +%Y-%m-%d))"
+          # Red de seguridad por si en el intervalo entre el checkout y este
+          # paso (job de hasta 350 min) alguien más ha hecho push a la rama:
+          # rebasea el commit nuevo encima de lo último en vez de fallar por
+          # non-fast-forward. Con el "concurrency" de arriba no debería darse
+          # dentro de este mismo workflow, pero cubre pushes externos.
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push
+
       - name: Subir log de errores
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: errores-build-epa
-          path: data_agregada/errores_build.log
+          path: logs/errores_build.log
           if-no-files-found: ignore
