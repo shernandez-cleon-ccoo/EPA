@@ -24,6 +24,12 @@
 #                    parados con ITBU informado; duracion_paro = tramos
 #                    < 3 meses / 3 a 6 meses / 6 meses a 1 año / 1 a 2 años /
 #                    2 años o más, vía ITBU)
+#   epa_calidad    : periodo, region, edad, sexo, sector, valor_ocu/asal/
+#                    temporal/indefinido/fijo_discontinuo/parcial/
+#                    parcial_involuntario + tasas ya calculadas (temporalidad,
+#                    fijo_discontinuo, parcialidad, parcialidad_involuntaria).
+#                    Cubre las pestañas Calidad del empleo / Temporalidad /
+#                    Jornada y parcialidad, vía DUCON1/DUCON2/PARCO1/PARCO2.
 #
 # `periodo` es una fecha (último día del trimestre: "2024-06-30", etc.),
 # EXACTAMENTE como en las tablas originales del INE, porque todo el código de
@@ -80,7 +86,11 @@ anexar_guardar <- function(nuevo, out_path) {
   cols_valor <- intersect(
     c("valor_pob", "valor_act", "valor_ocu", "valor_par", "valor_ina",
       "tasa_par", "tasa_act", "tasa_emp",
-      "n_pob", "n_act", "n_ocu", "n_par", "n_ina"),
+      "n_pob", "n_act", "n_ocu", "n_par", "n_ina",
+      "valor_asal", "n_asal", "valor_temporal", "n_temporal",
+      "valor_indefinido", "n_indefinido", "valor_fijo_discontinuo", "n_fijo_discontinuo",
+      "valor_parcial", "n_parcial", "valor_parcial_involuntario", "n_parcial_involuntario",
+      "tasa_temporalidad", "tasa_fijo_discontinuo", "tasa_parcialidad", "tasa_parcialidad_involuntaria"),
     names(nuevo)
   )
   if (file.exists(out_path)) {
@@ -112,7 +122,8 @@ out_paths <- list(
   nac        = file.path(OUT_DIR, "epa_nac.rds"),
   sector     = file.path(OUT_DIR, "epa_sector.rds"),
   ocup       = file.path(OUT_DIR, "epa_ocup.rds"),
-  paro_larga = file.path(OUT_DIR, "epa_paro_larga.rds")
+  paro_larga = file.path(OUT_DIR, "epa_paro_larga.rds"),
+  calidad    = file.path(OUT_DIR, "epa_calidad.rds")
 )
 
 pendientes_por_tabla <- lapply(out_paths, trimestres_pendientes, pares_todos = pares_todos)
@@ -121,14 +132,14 @@ periodos_pendientes <- unique(unlist(lapply(pendientes_por_tabla, function(ps) {
 })))
 
 if (length(periodos_pendientes) == 0) {
-  message("Nada que hacer: las 5 tablas ya están al día.")
+  message("Nada que hacer: las 8 tablas ya están al día.")
   quit(save = "no", status = 0)
 }
 
 message(sprintf("Trimestres a procesar en esta ejecución: %s",
                  paste(sort(periodos_pendientes), collapse = ", ")))
 
-acumulado <- list(edad = list(), prov = list(), form = list(), nac = list(), sector = list(), ocup = list(), paro_larga = list())
+acumulado <- list(edad = list(), prov = list(), form = list(), nac = list(), sector = list(), ocup = list(), paro_larga = list(), calidad = list())
 
 for (p in pares_todos) {
   etiqueta <- sprintf("%dT%d", p[["anio"]], p[["trim"]])
@@ -151,6 +162,7 @@ for (p in pares_todos) {
   acumulado$sector[[etiqueta]]     <- tablas$sector
   acumulado$ocup[[etiqueta]]       <- tablas$ocup
   acumulado$paro_larga[[etiqueta]] <- tablas$paro_larga
+  acumulado$calidad[[etiqueta]]    <- tablas$calidad
 }
 
 message("Guardando tablas agregadas...")
@@ -161,5 +173,6 @@ anexar_guardar(bind_rows(acumulado$nac),        out_paths$nac)
 anexar_guardar(bind_rows(acumulado$sector),     out_paths$sector)
 anexar_guardar(bind_rows(acumulado$ocup),       out_paths$ocup)
 anexar_guardar(bind_rows(acumulado$paro_larga), out_paths$paro_larga)
+anexar_guardar(bind_rows(acumulado$calidad),    out_paths$calidad)
 
 message("Hecho.")
