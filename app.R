@@ -9,8 +9,13 @@
 #    son locales a cada módulo y no aparecen aquí.
 #  - Navegación por niveles (§34 del briefing): Nivel 1 lectura rápida,
 #    Nivel 2 análisis, Nivel 3 exploración avanzada.
-#  - Esta es la Oleada 1 mínima: solo el módulo de Cuadro de mando está
-#    conectado; el resto de mod_*.R se añaden con el mismo patrón.
+#  - Oleada 1 COMPLETA: Cuadro de mando, Territorio, Mercado laboral, Empleo,
+#    Desempleo (+ Paro de larga duración), Calidad del empleo (+
+#    Temporalidad + Jornada), Mujeres/brecha, Jóvenes, Mayores, Extranjeros,
+#    Sectores, Ocupaciones, Comparativa CCAA e Histórico están conectados.
+#    Pendiente: Oleada 2 (Hogares, Comparador/Explorador unificado, "¿Qué ha
+#    cambiado?", informe PDF) y Oleada 3 (antigüedad de contrato, motivo de
+#    fin de empleo).
 # -----------------------------------------------------------------------------
 
 library(shiny)
@@ -30,6 +35,18 @@ source("R/indicators.R")
 source("R/ui_helpers.R")
 source("R/mod_cuadro_mando.R")
 source("R/mod_territorio.R")
+source("R/mod_mercado_laboral.R")
+source("R/mod_empleo.R")
+source("R/mod_desempleo.R")
+source("R/mod_calidad.R")
+source("R/mod_mujeres.R")
+source("R/mod_jovenes.R")
+source("R/mod_mayores.R")
+source("R/mod_extranjeros.R")
+source("R/mod_sectores.R")
+source("R/mod_ocupaciones.R")
+source("R/mod_comparativa_ccaa.R")
+source("R/mod_historico.R")
 
 DATA_DIR <- "data_agregada"
 
@@ -89,22 +106,25 @@ descargar_tabla_remota <- function(nombre) {
 cargar_tabla <- function(nombre) {
   remoto <- descargar_tabla_remota(nombre)
   if (!is.null(remoto)) return(remoto)
-  
+
   ruta_local <- file.path(DATA_DIR, paste0(nombre, ".rds"))
   if (file.exists(ruta_local)) {
     message(sprintf("Usando copia local de %s (no se pudo descargar de GitHub)", nombre))
     return(readRDS(ruta_local))
   }
-  
+
   message(sprintf("No hay datos disponibles para %s (ni remotos ni locales)", nombre))
   NULL
 }
 
-epa_edad_df <- cargar_tabla("epa_edad")
-epa_prov_df <- cargar_tabla("epa_prov")
-# epa_form_df / epa_nac_df / epa_sector_df / epa_ocup_df / epa_paro_larga_df
-# se cargan igual, cuando se conecten los módulos correspondientes (Nivel 2).
-# No se cargan aquí para no hacer el skeleton más pesado de lo necesario.
+epa_edad_df       <- cargar_tabla("epa_edad")
+epa_prov_df       <- cargar_tabla("epa_prov")
+epa_form_df       <- cargar_tabla("epa_form")
+epa_nac_df        <- cargar_tabla("epa_nac")
+epa_sector_df     <- cargar_tabla("epa_sector")
+epa_ocup_df       <- cargar_tabla("epa_ocup")
+epa_paro_larga_df <- cargar_tabla("epa_paro_larga")
+epa_calidad_df    <- cargar_tabla("epa_calidad")
 
 # -----------------------------------------------------------------------------
 # Relleno "al vuelo" del último trimestre si el INE ya lo publicó pero el cron
@@ -133,26 +153,26 @@ completar_con_ultimo_trimestre <- function(tablas) {
   # elementos NULL (módulos aún no conectados) se ignoran sin más.
   tablas_presentes <- tablas[!vapply(tablas, is.null, logical(1))]
   if (length(tablas_presentes) == 0) return(tablas)
-  
+
   ultimo_ine <- tryCatch(detectar_ultimo_trimestre(), error = function(e) NULL)
   if (is.null(ultimo_ine)) return(tablas)
-  
+
   periodo_ine <- periodo_date(ultimo_ine$anio, ultimo_ine$trim)
-  
+
   periodo_max_actual <- suppressWarnings(
     max(do.call(c, lapply(tablas_presentes, function(df) df$periodo)), na.rm = TRUE)
   )
-  
+
   if (is.finite(as.numeric(periodo_max_actual)) && periodo_ine <= periodo_max_actual) {
     return(tablas)  # el cron ya está al día con lo que el INE tiene publicado
   }
-  
+
   message(sprintf(
     "El INE ya tiene publicado %dT%d y las tablas de GitHub solo llegan a %s: cargando ese trimestre al vuelo...",
     ultimo_ine$anio, ultimo_ine$trim,
     if (is.finite(as.numeric(periodo_max_actual))) format(periodo_max_actual, "%Y-%m-%d") else "(sin datos)"
   ))
-  
+
   res <- tryCatch(
     cargar_trimestre(ultimo_ine$anio, ultimo_ine$trim),
     error = function(e) list(error = conditionMessage(e))
@@ -162,7 +182,7 @@ completar_con_ultimo_trimestre <- function(tablas) {
     message(sprintf("No se pudo completar el trimestre al vuelo (se sigue con los datos del cron): %s", err))
     return(tablas)
   }
-  
+
   nuevas <- tryCatch(
     calcular_tablas_trimestre(res, ultimo_ine$anio, ultimo_ine$trim),
     error = function(e) {
@@ -171,14 +191,14 @@ completar_con_ultimo_trimestre <- function(tablas) {
     }
   )
   if (is.null(nuevas)) return(tablas)
-  
+
   for (nombre in names(tablas)) {
     if (is.null(tablas[[nombre]]) || is.null(nuevas[[nombre]])) next
     if (!(periodo_ine %in% tablas[[nombre]]$periodo)) {
       tablas[[nombre]] <- bind_rows(tablas[[nombre]], nuevas[[nombre]])
     }
   }
-  
+
   message(sprintf(
     "Trimestre %dT%d añadido al vuelo para esta sesión del proceso R (no persistido; el próximo cron lo dejará ya en GitHub).",
     ultimo_ine$anio, ultimo_ine$trim
@@ -187,11 +207,23 @@ completar_con_ultimo_trimestre <- function(tablas) {
 }
 
 tablas_completadas <- completar_con_ultimo_trimestre(list(
-  edad = epa_edad_df,
-  prov = epa_prov_df
+  edad       = epa_edad_df,
+  prov       = epa_prov_df,
+  form       = epa_form_df,
+  nac        = epa_nac_df,
+  sector     = epa_sector_df,
+  ocup       = epa_ocup_df,
+  paro_larga = epa_paro_larga_df,
+  calidad    = epa_calidad_df
 ))
-epa_edad_df <- tablas_completadas$edad
-epa_prov_df <- tablas_completadas$prov
+epa_edad_df       <- tablas_completadas$edad
+epa_prov_df       <- tablas_completadas$prov
+epa_form_df       <- tablas_completadas$form
+epa_nac_df        <- tablas_completadas$nac
+epa_sector_df     <- tablas_completadas$sector
+epa_ocup_df       <- tablas_completadas$ocup
+epa_paro_larga_df <- tablas_completadas$paro_larga
+epa_calidad_df    <- tablas_completadas$calidad
 
 territorios_disponibles <- if (!is.null(epa_edad_df)) sort(unique(epa_edad_df$region)) else c("Castilla y León", "España")
 periodos_disponibles <- if (!is.null(epa_edad_df)) sort(unique(epa_edad_df$periodo), decreasing = TRUE) else Sys.Date()
@@ -205,9 +237,9 @@ ui <- fluidPage(
     body { font-family: 'Segoe UI', Arial, sans-serif; }
     .kpi-card { background: #FAFAFA; }
   "))),
-  
+
   titlePanel("EPA — Herramienta de análisis del mercado laboral"),
-  
+
   sidebarLayout(
     sidebarPanel(
       width = 3,
@@ -232,47 +264,46 @@ ui <- fluidPage(
         ". Pasa el ratón sobre el icono para ver el detalle."
       )
     ),
-    
+
     mainPanel(
       width = 9,
       tabsetPanel(
         id = "navegacion_principal",
         tabPanel("Resumen",
-                 navlistPanel(
-                   id = "nivel1",
-                   widths = c(2, 10),
-                   tabPanel("Cuadro de mando", mod_cuadro_mando_ui("cuadro_mando")),
-                   tabPanel("¿Qué ha cambiado?", tags$p("Pendiente (Oleada 2)."))
-                 )
+          navlistPanel(
+            id = "nivel1",
+            widths = c(2, 10),
+            tabPanel("Cuadro de mando", mod_cuadro_mando_ui("cuadro_mando")),
+            tabPanel("¿Qué ha cambiado?", tags$p("Pendiente (Oleada 2)."))
+          )
         ),
         tabPanel("Análisis",
-                 navlistPanel(
-                   id = "nivel2",
-                   widths = c(2, 10),
-                   tabPanel("Empleo", tags$p("Pendiente.")),
-                   tabPanel("Desempleo", tags$p("Pendiente.")),
-                   tabPanel("Calidad del empleo", tags$p("Pendiente.")),
-                   tabPanel("Temporalidad", tags$p("Pendiente.")),
-                   tabPanel("Jornada y parcialidad", tags$p("Pendiente.")),
-                   tabPanel("Mujeres / brecha de género", tags$p("Pendiente.")),
-                   tabPanel("Jóvenes", tags$p("Pendiente.")),
-                   tabPanel("Mayores de 55", tags$p("Pendiente.")),
-                   tabPanel("Población extranjera", tags$p("Pendiente.")),
-                   tabPanel("Sectores", tags$p("Pendiente.")),
-                   tabPanel("Ocupaciones", tags$p("Pendiente.")),
-                   tabPanel("Territorio", mod_territorio_ui("territorio"))
-                 )
+          navlistPanel(
+            id = "nivel2",
+            widths = c(2, 10),
+            tabPanel("Mercado laboral", mod_mercado_laboral_ui("mercado_laboral")),
+            tabPanel("Empleo", mod_empleo_ui("empleo")),
+            tabPanel("Desempleo", mod_desempleo_ui("desempleo")),
+            tabPanel("Calidad / Temporalidad / Jornada", mod_calidad_ui("calidad")),
+            tabPanel("Mujeres / brecha de género", mod_mujeres_ui("mujeres")),
+            tabPanel("Jóvenes", mod_jovenes_ui("jovenes")),
+            tabPanel("Mayores de 55", mod_mayores_ui("mayores")),
+            tabPanel("Población extranjera", mod_extranjeros_ui("extranjeros")),
+            tabPanel("Sectores", mod_sectores_ui("sectores")),
+            tabPanel("Ocupaciones", mod_ocupaciones_ui("ocupaciones")),
+            tabPanel("Territorio", mod_territorio_ui("territorio"))
+          )
         ),
         tabPanel("Exploración avanzada",
-                 navlistPanel(
-                   id = "nivel3",
-                   widths = c(2, 10),
-                   tabPanel("Comparador / Explorador", tags$p("Pendiente (Oleada 2).")),
-                   tabPanel("Comparativa CCAA", tags$p("Pendiente.")),
-                   tabPanel("Histórico", tags$p("Pendiente.")),
-                   tabPanel("Hogares", tags$p("Pendiente (Oleada 2).")),
-                   tabPanel("Metodología", tags$p("Pendiente."))
-                 )
+          navlistPanel(
+            id = "nivel3",
+            widths = c(2, 10),
+            tabPanel("Comparador / Explorador", tags$p("Pendiente (Oleada 2).")),
+            tabPanel("Comparativa CCAA", mod_comparativa_ccaa_ui("comparativa_ccaa")),
+            tabPanel("Histórico", mod_historico_ui("historico")),
+            tabPanel("Hogares", tags$p("Pendiente (Oleada 2).")),
+            tabPanel("Metodología", tags$p("Pendiente."))
+          )
         )
       )
     )
@@ -283,7 +314,7 @@ ui <- fluidPage(
 # Server
 # -----------------------------------------------------------------------------
 server <- function(input, output, session) {
-  
+
   # Filtros globales compartidos, expuestos como reactives a cada módulo.
   # territorio_comp() devuelve NULL (no "") cuando no hay comparación, para
   # que los módulos solo tengan que comprobar is.null() una vez.
@@ -293,12 +324,36 @@ server <- function(input, output, session) {
     periodo         = reactive(as.Date(input$f_periodo)),
     sexo            = reactive(switch(input$f_sexo, total = "total", Hombres = "Hombres", Mujeres = "Mujeres"))
   )
-  
+
   mod_cuadro_mando_server("cuadro_mando", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
   mod_territorio_server("territorio", datos_edad = reactive(epa_edad_df), datos_prov = reactive(epa_prov_df), filtros = filtros_globales)
-  
-  # A medida que se conectan los módulos de Nivel 2/3, se llaman aquí con
-  # el mismo patrón: mod_XXX_server("id", datos_YYY, filtros_globales)
+  mod_mercado_laboral_server("mercado_laboral", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
+  mod_empleo_server(
+    "empleo",
+    datos_edad = reactive(epa_edad_df), datos_sector = reactive(epa_sector_df),
+    datos_nac = reactive(epa_nac_df), datos_form = reactive(epa_form_df),
+    datos_calidad = reactive(epa_calidad_df), filtros = filtros_globales
+  )
+  mod_desempleo_server(
+    "desempleo",
+    datos_edad = reactive(epa_edad_df), datos_nac = reactive(epa_nac_df),
+    datos_form = reactive(epa_form_df), datos_paro_larga = reactive(epa_paro_larga_df),
+    filtros = filtros_globales
+  )
+  mod_calidad_server("calidad", datos_calidad = reactive(epa_calidad_df), filtros = filtros_globales)
+  mod_mujeres_server("mujeres", datos_edad = reactive(epa_edad_df), datos_calidad = reactive(epa_calidad_df), filtros = filtros_globales)
+  mod_jovenes_server("jovenes", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
+  mod_mayores_server("mayores", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
+  mod_extranjeros_server("extranjeros", datos_nac = reactive(epa_nac_df), filtros = filtros_globales)
+  mod_sectores_server("sectores", datos_sector = reactive(epa_sector_df), filtros = filtros_globales)
+  mod_ocupaciones_server("ocupaciones", datos_ocup = reactive(epa_ocup_df), filtros = filtros_globales)
+  mod_comparativa_ccaa_server("comparativa_ccaa", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
+  mod_historico_server("historico", datos_edad = reactive(epa_edad_df), filtros = filtros_globales)
+
+  # Oleada 1 completa. A medida que se conecten los módulos de Oleada 2
+  # (Hogares, Comparador/Explorador unificado, "¿Qué ha cambiado?", informe
+  # PDF), se llaman aquí con el mismo patrón:
+  # mod_XXX_server("id", datos_YYY, filtros_globales)
 }
 
 shinyApp(ui, server)
