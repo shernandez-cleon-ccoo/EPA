@@ -2,7 +2,7 @@ name: Actualizar tablas EPA
 on:
   workflow_dispatch:
   schedule:
-    - cron: "6 4 * * *"
+    - cron: "0 6 * * *"
 
 # El GITHUB_TOKEN por defecto es de solo lectura en muchas organizaciones/
 # repos recientes; sin este bloque el "git push" final falla con 403 aunque
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 350
     steps:
       - name: Checkout del repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Diagnóstico del checkout
         run: |
@@ -69,7 +69,7 @@ jobs:
           r-version: "4.4"
 
       - name: Cachear paquetes de R
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.R_LIBS_USER }}
           # Clave ligada al propio workflow: si cambias la lista de paquetes
@@ -81,7 +81,7 @@ jobs:
             r-pkgs-
 
       - name: Cachear microdatos EPA
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: epa_cache
           key: epa-microdatos-cache-v1
@@ -153,7 +153,7 @@ jobs:
 
       - name: Subir log de errores
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: errores-build-epa
           path: logs/errores_build.log
