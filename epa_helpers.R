@@ -597,6 +597,61 @@ agregar_ocupados_base <- function(df, group_vars) {
     summarise(valor_ocu = sum(FACTOR_USAR, na.rm = TRUE), n_ocu = dplyr::n(), .groups = "drop")
 }
 
+# Temporalidad + parcialidad en una sola tabla (universo asalariados para
+# DUCON*, universo ocupados para PARCO*, cada valor_* con su propio
+# denominador correcto -- ver notas de codigos INE en la cabecera del
+# fichero). DUCON1/DUCON2/PARCO1/PARCO2 ya viajaban en cols_keep desde el
+# principio pero no se explotaban en ninguna tabla estrella; esta es esa
+# tabla. Códigos verificados contra dr_EPA (estables 2005-2026):
+#   DUCON1 == "1" -> Indefinido | DUCON1 == "6" -> Temporal
+#   DUCON2 == "6" -> Fijo discontinuo (dentro de los indefinidos)
+#   PARCO1 == "6" -> Jornada parcial
+#   PARCO2 == "05" -> "no haber podido encontrar trabajo de jornada completa"
+#     (motivo de involuntariedad, solo informado dentro de los parciales)
+agregar_calidad_base <- function(df, group_vars) {
+  if (nrow(df) == 0) return(tibble())
+  # es_* precalculados con %in% (nunca NA, a diferencia de == cuando DUCON*/
+  # PARCO* vienen sin informar para quien no aplica) para que ni los sum()
+  # de valor_* ni los de n_* se contaminen de NA por una comparación mal
+  # hecha en vez de por falta real de datos.
+  df <- df |>
+    mutate(
+      es_asal        = SITU %in% c("07", "08"),
+      es_ocu         = AOI %in% c("03", "04"),
+      es_temporal    = es_asal & DUCON1 %in% "6",
+      es_indefinido  = es_asal & DUCON1 %in% "1",
+      es_fijo_discontinuo = es_indefinido & DUCON2 %in% "6",
+      es_parcial     = es_ocu & PARCO1 %in% "6",
+      es_parcial_inv = es_parcial & PARCO2 %in% "05"
+    )
+  df |>
+    filter(if_all(all_of(group_vars), ~ !is.na(.x))) |>
+    group_by(across(all_of(c("periodo", group_vars)))) |>
+    summarise(
+      valor_ocu  = sum(FACTOR_USAR[es_ocu], na.rm = TRUE),
+      n_ocu      = sum(es_ocu),
+      valor_asal = sum(FACTOR_USAR[es_asal], na.rm = TRUE),
+      n_asal     = sum(es_asal),
+      valor_temporal = sum(FACTOR_USAR[es_temporal], na.rm = TRUE),
+      n_temporal     = sum(es_temporal),
+      valor_indefinido = sum(FACTOR_USAR[es_indefinido], na.rm = TRUE),
+      n_indefinido     = sum(es_indefinido),
+      valor_fijo_discontinuo = sum(FACTOR_USAR[es_fijo_discontinuo], na.rm = TRUE),
+      n_fijo_discontinuo     = sum(es_fijo_discontinuo),
+      valor_parcial = sum(FACTOR_USAR[es_parcial], na.rm = TRUE),
+      n_parcial     = sum(es_parcial),
+      valor_parcial_involuntario = sum(FACTOR_USAR[es_parcial_inv], na.rm = TRUE),
+      n_parcial_involuntario     = sum(es_parcial_inv),
+      .groups = "drop"
+    ) |>
+    mutate(
+      tasa_temporalidad             = 100 * valor_temporal / valor_asal,
+      tasa_fijo_discontinuo         = 100 * valor_fijo_discontinuo / valor_indefinido,
+      tasa_parcialidad              = 100 * valor_parcial / valor_ocu,
+      tasa_parcialidad_involuntaria = 100 * valor_parcial_involuntario / valor_parcial
+    )
+}
+
 # Análogo a agregar_ocupados_base() pero para dimensiones que solo están
 # informadas para parados (p.ej. duracion_paro, vía ITBU). Usa AOI %in%
 # c("05","06") en vez de "está en la tabla epa_paro_larga sumando FACTOR_USAR
@@ -683,6 +738,15 @@ calcular_tablas_trimestre <- function(res, anio, trim) {
     con_totales(agregar_parados_base, df, c("duracion_paro", "sexo"), "region", c(duracion_paro = "Total", sexo = "total")),
     con_totales(agregar_parados_base, df |> mutate(region = "España"), c("duracion_paro", "sexo"), "region", c(duracion_paro = "Total", sexo = "total"))
   )
+  # Temporalidad + parcialidad (Calidad del empleo / Temporalidad / Jornada).
+  # Dims edad x sexo x sector para cubrir los filtros que pide el briefing en
+  # esas 3 pestañas; de momento sin cruce con nacionalidad (esa dimensión
+  # sigue viviendo solo en epa_nac) para no disparar el nº de combinaciones
+  # de con_totales -- se puede añadir después si hace falta.
+  calidad <- bind_rows(
+    con_totales(agregar_calidad_base, df, c("edad", "sexo", "sector"), "region", c(edad = "total", sexo = "total", sector = "Total")),
+    con_totales(agregar_calidad_base, df |> mutate(region = "España"), c("edad", "sexo", "sector"), "region", c(edad = "total", sexo = "total", sector = "Total"))
+  )
 
-  list(edad = edad, prov = prov, form = form, nac = nac, sector = sector, ocup = ocup, paro_larga = paro_larga)
+  list(edad = edad, prov = prov, form = form, nac = nac, sector = sector, ocup = ocup, paro_larga = paro_larga, calidad = calidad)
 }
