@@ -2,7 +2,7 @@ name: Actualizar tablas EPA
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "6 4 * * *"
 
 # El GITHUB_TOKEN por defecto es de solo lectura en muchas organizaciones/
 # repos recientes; sin este bloque el "git push" final falla con 403 aunque
