@@ -58,8 +58,11 @@ mod_desempleo_ui <- function(id) {
 #' @param id id del módulo
 #' @param datos_edad,datos_nac,datos_form,datos_paro_larga reactives con las
 #'   tablas estrella ya cargadas
+#' @param datos_paro_tipo,datos_motivo_paro reactives con las tablas estrella
+#'   ya cargadas (aún sin usar en este módulo)
 #' @param filtros lista de reactives compartidos desde app.R
-mod_desempleo_server <- function(id, datos_edad, datos_nac, datos_form, datos_paro_larga, filtros) {
+mod_desempleo_server <- function(id, datos_edad, datos_nac, datos_form, datos_paro_larga,
+                                  datos_paro_tipo, datos_motivo_paro, filtros) {
   moduleServer(id, function(input, output, session) {
 
     output$resumen_seleccion <- renderUI({
