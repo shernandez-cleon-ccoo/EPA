@@ -43,7 +43,22 @@ mod_mercado_laboral_ui <- function(id) {
           "positivo significa que entra m\u00e1s gente al mercado laboral (sube el paro, ",
           "a igualdad de empleo); el efecto \"Ocupados\" positivo significa que se ",
           "crea empleo suficiente para absorber a esos activos (baja el paro)."
-        )
+        ),
+        hr(),
+        tags$h4("De d\u00f3nde vienen los parados actuales (dato real, no estimado)"),
+        tags$p(
+          style = "font-size:0.8em; color:#666;",
+          "Fuente: Estad\u00edstica de Flujos de la Poblaci\u00f3n Activa (EFPA) del INE, no ",
+          "reconstruida por este dashboard \u2014 el INE la calcula enlazando individuos ",
+          "reales entre trimestres consecutivos (panel rotante de la EPA) y la publica ",
+          "ya hecha. A diferencia del gr\u00e1fico de arriba (una identidad contable sobre ",
+          "agregados), esto s\u00ed distingue si el aumento del paro viene de gente que ",
+          "realmente perdi\u00f3 su empleo el trimestre pasado o de gente que entra desde ",
+          "la inactividad. \u26A0 Sin desglose por sexo (la tabla del INE por CCAA no lo trae)."
+        ),
+        fluidRow(column(3, uiOutput(ns("kpi_flujo_desde_ocupados")))),
+        br(),
+        plotly::plotlyOutput(ns("plot_flujos_origen"), height = "380px")
       ),
       tabPanel(
         "Evoluci\u00f3n del mercado laboral",
@@ -65,8 +80,9 @@ mod_mercado_laboral_ui <- function(id) {
 
 #' @param id id del módulo
 #' @param datos_edad reactive() que devuelve la tabla epa_edad ya cargada
+#' @param datos_flujos reactive() que devuelve la tabla epa_flujos (EFPA) ya cargada
 #' @param filtros lista de reactives compartidos desde app.R
-mod_mercado_laboral_server <- function(id, datos_edad, filtros) {
+mod_mercado_laboral_server <- function(id, datos_edad, datos_flujos, filtros) {
   moduleServer(id, function(input, output, session) {
 
     # --- Serie completa (todos los periodos) del territorio de referencia,
@@ -134,7 +150,47 @@ mod_mercado_laboral_server <- function(id, datos_edad, filtros) {
       plotly::ggplotly(p, tooltip = "text")
     })
 
-    # --- Evolución activos/ocupados/parados/inactivos -----------------------
+    # --- De dónde vienen los parados actuales (EFPA real, no estimada) ------
+    ORDEN_ORIGEN_PARO <- c("Ocupados", "Parados", "Inactivos", "No consta")
+
+    fila_flujos_actual <- reactive({
+      req(datos_flujos(), filtros$territorio_ref(), filtros$periodo())
+      datos_flujos() |>
+        dplyr::filter(
+          region == filtros$territorio_ref(), periodo == filtros$periodo(),
+          situacion_actual == "Parados", situacion_anterior %in% ORDEN_ORIGEN_PARO
+        )
+    })
+
+    output$plot_flujos_origen <- plotly::renderPlotly({
+      df <- fila_flujos_actual()
+      shiny::validate(shiny::need(
+        nrow(df) > 0,
+        "No disponible para este trimestre/territorio en la EFPA (la serie empieza en 2014, o la muestra es insuficiente para este cruce)."
+      ))
+      df <- df |> dplyr::mutate(situacion_anterior = factor(situacion_anterior, levels = ORDEN_ORIGEN_PARO))
+      p <- ggplot2::ggplot(df, ggplot2::aes(
+        x = reorder(situacion_anterior, valor), y = valor,
+        text = sprintf("%s el trimestre anterior: %s", situacion_anterior, format(round(valor), big.mark = ".", decimal.mark = ","))
+      )) +
+        ggplot2::geom_col(fill = "#0B5FA5") +
+        ggplot2::coord_flip() +
+        ggplot2::labs(x = NULL, y = "Parados actuales",
+                      title = sprintf("Parados de %s seg\u00fan su situaci\u00f3n el trimestre anterior \u2014 %s",
+                                       filtros$territorio_ref(), formato_trimestre(filtros$periodo()))) +
+        ggplot2::theme_minimal()
+      plotly::ggplotly(p, tooltip = "text")
+    })
+
+    output$kpi_flujo_desde_ocupados <- renderUI({
+      df <- fila_flujos_actual()
+      total <- sum(df$valor, na.rm = TRUE)
+      desde_ocu <- df$valor[df$situacion_anterior == "Ocupados"]
+      pct <- if (length(desde_ocu) == 1 && total > 0) round(100 * desde_ocu / total, 1) else NA
+      kpi_card(titulo = "Parados que eran ocupados hace un trimestre", unidad = "%", valor = pct)
+    })
+
+
     output$plot_evolucion <- plotly::renderPlotly({
       req(serie_total())
       datos <- serie_total() |>
